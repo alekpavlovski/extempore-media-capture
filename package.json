@@ -1,0 +1,25 @@
+{
+  "name": "extempore-media-capture",
+  "version": "0.0.1",
+  "description": "",
+  "cordova": {
+    "id": "extempore-media-capture",
+    "platforms": [
+      "ios"
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alekpavlovski/extempore-media-capture.git"
+  },
+  "keywords": [
+    "ecosystem:cordova",
+    "cordova-ios"
+  ],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/alekpavlovski/extempore-media-capture/issues"
+  },
+  "homepage": "https://github.com/alekpavlovski/extempore-media-capture#readme"
+}
