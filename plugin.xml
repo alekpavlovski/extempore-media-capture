@@ -9,7 +9,6 @@
       <feature name="ExtemporeMediaCapture">
         <param name="ios-package" value="ExtemporeMediaCapture" />
       </feature>
-      <preference name="UseSwiftLanguageVersion" value="4.1" />
     </config-file>
     <source-file src="src/ios/ExtemporeMediaCapture.swift" />
   </platform>
