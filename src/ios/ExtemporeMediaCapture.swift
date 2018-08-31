@@ -7,6 +7,10 @@ import UIKit
     var videoPreviewLayer: AVCaptureVideoPreviewLayer?
     var onDoneBlock : ((String) -> Void)?
     var videoOutput = AVCaptureMovieFileOutput()
+    var activeInput: AVCaptureDeviceInput!
+    var outputURL: URL!
+    var outputName: String = "empty"
+    var callbackId: String!
     
     @objc(openPreview:)
     func openPreview(command: CDVInvokedUrlCommand) {
@@ -23,12 +27,22 @@ import UIKit
             let input = try AVCaptureDeviceInput.init(device: captureDevice)
             captureSession = AVCaptureSession()
             captureSession?.addInput(input)
+            activeInput = input
+            let microphone = AVCaptureDevice.default(for: AVMediaType.audio)
             
-            videoPreviewLayer = AVCaptureVideoPreviewLayer(session: captureSession!)
-            videoPreviewLayer?.frame = (self.webView.superview?.layer.bounds)!
-            self.webView.superview?.layer.addSublayer(videoPreviewLayer!)
+            do {
+                let micInput = try AVCaptureDeviceInput(device: microphone!)
+                if (captureSession?.canAddInput(micInput))! {
+                    captureSession?.addInput(micInput)
+                }
+            } catch {
+                print("Error setting device audio input: \(error)")
+            }
+
+            self.videoPreviewLayer = AVCaptureVideoPreviewLayer(session: captureSession!)
+            self.videoPreviewLayer?.frame = (self.webView.superview?.layer.bounds)!
+            self.webView.superview?.layer.addSublayer(self.videoPreviewLayer!)
             self.webView.superview?.bringSubview(toFront: self.webView)
-            print("Starting preview")
             captureSession?.startRunning()
         } catch  {
             print(error)
@@ -38,51 +52,111 @@ import UIKit
     
     @objc(stopRecording:)
     func stopRecording(command: CDVInvokedUrlCommand) {
+        callbackId =  command.callbackId
+        self.stop()
+    }
+
+    func completed() {
         var pluginResult = CDVPluginResult(
             status: CDVCommandStatus_ERROR
         )
-        self.onDoneBlock = { result in
-            pluginResult = CDVPluginResult(
-                status: CDVCommandStatus_OK,
-                messageAs: result
-            )
-            
-            self.commandDelegate!.send(
-                pluginResult,
-                callbackId: command.callbackId
-            )
-        }
-        self.videoOutput.stopRecording()
+        self.videoPreviewLayer?.removeFromSuperlayer()
+        let payload = "{ \"name\": \"\(outputName)\" }"
+        pluginResult = CDVPluginResult(
+            status: CDVCommandStatus_OK,
+            messageAs: payload
+        )
+        self.commandDelegate!.send(
+            pluginResult,
+            callbackId: callbackId
+        )
     }
     
     @objc(startRecording:)
     func startRecording(command: CDVInvokedUrlCommand) {
-        print("Recording now")
-        self.captureSession?.addOutput(self.videoOutput)
-        self.captureSession?.commitConfiguration()
-        let paths = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
-        let fileUrl = paths[0].appendingPathComponent("output.mov")
+        outputName = UUID().uuidString + ".mov";
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory());
+        let fileUrl = dir.appendingPathComponent(outputName)
         try? FileManager.default.removeItem(at: fileUrl)
-        self.videoOutput.startRecording(to: fileUrl, recordingDelegate: self)
+
+        self.videoOutput = AVCaptureMovieFileOutput()
+        if (self.captureSession?.canAddOutput(self.videoOutput))! {
+            self.captureSession?.addOutput(self.videoOutput)
+            self.captureSession?.startRunning()
+            self.videoOutput.startRecording(to: fileUrl, recordingDelegate: self)
+        }
+    }
+
+    func tempURL() -> URL? {
+        let directory = NSTemporaryDirectory() as NSString
+        outputName = UUID().uuidString + ".mov"
+        if directory != "" {
+            let path = directory.appendingPathComponent(outputName)
+            return URL(fileURLWithPath: path)
+        }
+        return nil
+    }
+
+    func currentVideoOrientation() -> AVCaptureVideoOrientation {
+        var orientation: AVCaptureVideoOrientation
+        
+        switch UIDevice.current.orientation {
+        case .portrait:
+            orientation = AVCaptureVideoOrientation.portrait
+        case .landscapeRight:
+            orientation = AVCaptureVideoOrientation.landscapeLeft
+        case .portraitUpsideDown:
+            orientation = AVCaptureVideoOrientation.portraitUpsideDown
+        default:
+            orientation = AVCaptureVideoOrientation.landscapeRight
+        }
+        
+        return orientation
+    }
+
+    func videoQueue() -> DispatchQueue {
+        return DispatchQueue.main
+    }
+
+    func startSession() {
+        if !(captureSession?.isRunning)! {
+            videoQueue().async {
+                self.captureSession?.startRunning()
+            }
+        }
+    }
+    
+    func stopSession() {
+        if (captureSession?.isRunning)! {
+            videoQueue().async {
+                self.captureSession?.stopRunning()
+            }
+        }
+    }
+
+    func start() {
+        if videoOutput.isRecording == false {
+            outputURL = tempURL()
+            videoOutput.startRecording(to: outputURL, recordingDelegate: self)
+        }
+        else {
+            stop()
+        }
+    }
+
+    func stop() {
+        if videoOutput.isRecording == true {
+            videoOutput.stopRecording()
+            self.stopSession()
+        }
+    }
+
+    func setupCaptureMode(_ mode: Int) {
+        // Video Mode
     }
 
     func fileOutput(_ output: AVCaptureFileOutput, didFinishRecordingTo outputFileURL: URL, from connections: [AVCaptureConnection], error: Error?) {
-        print("FINISHED \(error)")
-        // save video to camera roll
-        if error == nil {
-            if(onDoneBlock != nil) {
-                do {
-                    let x = try String(contentsOfFile: outputFileURL.absoluteString )
-                    onDoneBlock!(x)
-                    // onDoneBlock!("Trying to read from:" + outputFileURL.absoluteString)
-                } catch {
-                    onDoneBlock!("Failed to read from file." + outputFileURL.absoluteString)
-                }
-                
-            } else {
-                print("Couldn't on done block.")
-            }
-        }
+        completed()
     }
     
     
@@ -100,5 +174,20 @@ import UIKit
     private func updatePreviewLayer(layer: AVCaptureConnection, orientation: AVCaptureVideoOrientation) {
         layer.videoOrientation = orientation
         videoPreviewLayer?.frame = (self.webView.superview?.layer.bounds)!
+    }
+
+    func capture(_ captureOutput: AVCaptureFileOutput!, didStartRecordingToOutputFileAt fileURL: URL!, fromConnections connections: [Any]!) {
+        
+    }
+    
+    func capture(_ captureOutput: AVCaptureFileOutput!, didFinishRecordingToOutputFileAt outputFileURL: URL!, fromConnections connections: [Any]!, error: Error!) {
+        if (error != nil) {
+            print("Error recording movie: \(error!.localizedDescription)")
+        } else {
+            
+            _ = outputURL as URL
+            
+        }
+        outputURL = nil
     }
 }
