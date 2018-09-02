@@ -61,7 +61,11 @@ import UIKit
             status: CDVCommandStatus_ERROR
         )
         self.videoPreviewLayer?.removeFromSuperlayer()
-        let payload = "{ \"name\": \"\(outputName)\" }"
+        let videoName = outputName + ".mp4"
+        if self.fileExists(fileName: videoName) {
+            print("FOUND IT: \(videoName)")
+        }
+        let payload = "{ \"name\": \"\(videoName)\" }"
         pluginResult = CDVPluginResult(
             status: CDVCommandStatus_OK,
             messageAs: payload
@@ -72,11 +76,30 @@ import UIKit
         )
     }
     
+    func fileExists(fileName: String) -> Bool {
+        let url = NSURL(fileURLWithPath: NSTemporaryDirectory())
+        if let pathComponent = url.appendingPathComponent(fileName) {
+            let filePath = pathComponent.path
+            let fileManager = FileManager.default
+            if fileManager.fileExists(atPath: filePath) {
+                print("FILE AVAILABLE")
+                return true
+            } else {
+                print("FILE NOT AVAILABLE")
+                return false
+            }
+        } else {
+            print("FILE PATH NOT AVAILABLE")
+            return false
+        }
+    }
+    
     @objc(startRecording:)
     func startRecording(command: CDVInvokedUrlCommand) {
-        outputName = UUID().uuidString + ".mov";
+        outputName = UUID().uuidString;
+        let movName = outputName + ".mov";
         let dir = URL(fileURLWithPath: NSTemporaryDirectory());
-        let fileUrl = dir.appendingPathComponent(outputName)
+        let fileUrl = dir.appendingPathComponent(movName)
         try? FileManager.default.removeItem(at: fileUrl)
 
         self.videoOutput = AVCaptureMovieFileOutput()
@@ -89,9 +112,10 @@ import UIKit
 
     func tempURL() -> URL? {
         let directory = NSTemporaryDirectory() as NSString
-        outputName = UUID().uuidString + ".mov"
+        outputName = UUID().uuidString
+        var movName = outputName + ".mov";
         if directory != "" {
-            let path = directory.appendingPathComponent(outputName)
+            let path = directory.appendingPathComponent(movName)
             return URL(fileURLWithPath: path)
         }
         return nil
@@ -156,7 +180,10 @@ import UIKit
     }
 
     func fileOutput(_ output: AVCaptureFileOutput, didFinishRecordingTo outputFileURL: URL, from connections: [AVCaptureConnection], error: Error?) {
-        completed()
+        encodeVideo(videoUrl: outputFileURL, resultClosure: { url in
+            print("Final file url: \(url)")
+            self.completed()
+        })
     }
     
     
@@ -189,5 +216,50 @@ import UIKit
             
         }
         outputURL = nil
+    }
+    
+    func encodeVideo(videoUrl: URL, outputUrl: URL? = nil, resultClosure: @escaping (URL?) -> Void ) {
+        print("Starting conversion")
+        var finalOutputUrl: URL? = outputUrl
+        
+        if finalOutputUrl == nil {
+            var url = videoUrl
+            url.deletePathExtension()
+            url.appendPathExtension("mp4")
+            finalOutputUrl = url
+        }
+        
+        if FileManager.default.fileExists(atPath: finalOutputUrl!.path) {
+            print("Converted file already exists \(finalOutputUrl!.path)")
+            resultClosure(finalOutputUrl)
+            return
+        }
+        
+        let asset = AVURLAsset(url: videoUrl)
+        if let exportSession = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetPassthrough) {
+            exportSession.outputURL = finalOutputUrl!
+            exportSession.outputFileType = AVFileType.mp4
+            let start = CMTimeMakeWithSeconds(0.0, 0)
+            let range = CMTimeRangeMake(start, asset.duration)
+            exportSession.timeRange = range
+            exportSession.shouldOptimizeForNetworkUse = true
+            exportSession.exportAsynchronously() {
+                
+                switch exportSession.status {
+                case .failed:
+                    print("Export failed: \(exportSession.error != nil ? exportSession.error!.localizedDescription : "No Error Info")")
+                case .cancelled:
+                    print("Export canceled")
+                case .completed:
+                    print("Completed conversion \(finalOutputUrl)")
+                    resultClosure(finalOutputUrl!)
+                default:
+                    break
+                }
+            }
+        } else {
+            print("Failed conversion for \(finalOutputUrl)")
+            resultClosure(nil)
+        }
     }
 }
